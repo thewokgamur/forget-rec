@@ -1,4 +1,9 @@
-name: Build Mod
+name: Build the mod
+uses: geode-sdk/build-geode-mod@main
+with:
+sdk: latest
+combine: true
+target: ${{ matrix.config.target }}
 
 on:
   workflow_dispatch:
