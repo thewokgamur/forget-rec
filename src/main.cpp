@@ -140,7 +140,7 @@ namespace RM {
 				if (!tok.empty()) kws.push_back(tok);
 			}
 			for (auto mod : Loader::get()->getAllMods()) {
-				if (mod == Mod::get() || !mod->isEnabled()) continue;
+				if (mod == Mod::get() || !mod->isLoaded()) continue;
 				auto id = lower(mod->getID());
 				auto nm = lower(mod->getName());
 				for (auto& kw : kws) {
@@ -254,9 +254,9 @@ class $modify(RMBaseLayer, GJBaseGameLayer) {
 		GJBaseGameLayer::handleButton(down, button, isPlayer1);
 	}
 
-	void processCommands(float dt) {
+	void processCommands(float dt, bool isHalfTick, bool isLastTick) {
 		if (!this->isMainPlay()) {
-			GJBaseGameLayer::processCommands(dt);
+			GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
 			return;
 		}
 
@@ -282,7 +282,7 @@ class $modify(RMBaseLayer, GJBaseGameLayer) {
 			RM::injecting = false;
 		}
 
-		GJBaseGameLayer::processCommands(dt);
+		GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
 		RM::frame++;
 	}
 };
