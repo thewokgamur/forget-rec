@@ -36,6 +36,11 @@ namespace RM {
 	inline bool playing = false;
 	inline bool injecting = false;
 	inline bool noclipSeen = false;
+	inline bool speedCheat = false;
+	inline bool haveLast = false;
+	inline double accSim = 0.0, accReal = 0.0;
+	inline std::chrono::steady_clock::time_point lastT;
+	inline uint32_t tick = 0;
 	inline uint32_t frame = 0;
 	inline size_t playIdx = 0;
 	inline int levelID = 0;
@@ -122,11 +127,6 @@ namespace RM {
 	}
 
 	// --- real-time speed measurement (catches speedhacks that scale dt) ---
-	inline bool speedCheat = false;
-	inline bool haveLast = false;
-	inline double accSim = 0.0, accReal = 0.0;
-	inline std::chrono::steady_clock::time_point lastT;
-	inline uint32_t tick = 0;
 
 	inline void sampleSpeed(float dt) {
 		auto now = std::chrono::steady_clock::now();
