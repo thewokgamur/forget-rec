@@ -1,0 +1,22 @@
+{
+	"geode": "5.0.0",
+	"gd": {
+		"win": "2.2081",
+		"android": "2.2081",
+		"mac": "2.2081",
+		"ios": "2.2081"
+	},
+	"id": "yourname.replay-macro",
+	"name": "Replay Macro",
+	"version": "v1.0.0",
+	"developer": "yourname",
+	"description": "Record and play back your inputs. Recording turns off automatically if noclip or speedhack is detected.",
+	"settings": {
+		"cheat-keywords": {
+			"name": "Cheat mod keywords",
+			"description": "Comma-separated. If an enabled mod's ID or name contains one of these words, recording is blocked / turned off.",
+			"type": "string",
+			"default": "noclip,no-clip,speedhack,speed-hack"
+		}
+	}
+}
