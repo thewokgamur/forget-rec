@@ -12,6 +12,7 @@
 #include <Geode/modify/GJBaseGameLayer.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -113,10 +114,33 @@ namespace RM {
 	}
 
 	inline void resetAll() {
-		recording = playing = injecting = noclipSeen = false;
+		recording = playing = injecting = noclipSeen = speedCheat = haveLast = false;
+		accSim = accReal = 0.0;
 		frame = 0;
 		playIdx = 0;
 		inputs.clear();
+	}
+
+	// --- real-time speed measurement (catches speedhacks that scale dt) ---
+	inline bool speedCheat = false;
+	inline bool haveLast = false;
+	inline double accSim = 0.0, accReal = 0.0;
+	inline std::chrono::steady_clock::time_point lastT;
+	inline uint32_t tick = 0;
+
+	inline void sampleSpeed(float dt) {
+		auto now = std::chrono::steady_clock::now();
+		if (!haveLast) { lastT = now; haveLast = true; return; }
+		double real = std::chrono::duration<double>(now - lastT).count();
+		lastT = now;
+		if (real > 0.5 || dt > 0.5f) { accSim = accReal = 0.0; return; } // pause / hitch
+		accSim += dt;
+		accReal += real;
+		if (accReal >= 1.0) {
+			double ratio = accSim / accReal;
+			speedCheat = (ratio > 1.1 || ratio < 0.9);
+			accSim = accReal = 0.0;
+		}
 	}
 
 	// Returns a non-empty reason string if a cheat is active.
@@ -125,6 +149,7 @@ namespace RM {
 		// 1) speedhack: scheduler time scale changed
 		auto ts = CCDirector::get()->getScheduler()->getTimeScale();
 		if (std::fabs(ts - 1.f) > 0.001f) return "Speedhack";
+		if (speedCheat) return "Speedhack";
 
 		// 2) noclip: player survived a hazard hit (see PlayLayer hook below)
 		if (noclipSeen) return "Noclip";
@@ -153,10 +178,19 @@ namespace RM {
 		return "";
 	}
 
-	inline void abortRecording(std::string const& why) {
+	inline void abortRecording(std::string const& msg) {
 		recording = false;
 		inputs.clear();
-		notify("Recording turned off: " + why + " detected", NotificationIcon::Error);
+		notify("Recording turned off: " + msg, NotificationIcon::Error);
+	}
+
+	// Called every frame while recording: turns recording off on cheats / practice mode.
+	inline void guard(PlayLayer* pl) {
+		if (!recording || !pl) return;
+		bool scan = (tick++ % 120 == 0);
+		auto why = detectCheat(scan);
+		if (!why.empty()) { abortRecording(why + " detected"); return; }
+		if (pl->m_isPracticeMode) abortRecording("practice mode is on");
 	}
 }
 
@@ -260,17 +294,8 @@ class $modify(RMBaseLayer, GJBaseGameLayer) {
 			return;
 		}
 
-		// ---- cheat watchdog: auto-disable recording ----
-		if (RM::recording) {
-			bool scan = (RM::frame % 120 == 0);
-			auto why = RM::detectCheat(scan);
-			if (!why.empty()) RM::abortRecording(why);
-			else if (PlayLayer::get()->m_isPracticeMode) {
-				RM::recording = false;
-				RM::inputs.clear();
-				RM::notify("Recording is not supported in practice mode", NotificationIcon::Error);
-			}
-		}
+		// ---- cheat / practice watchdog ----
+		if (RM::recording) RM::guard(PlayLayer::get());
 
 		// ---- playback ----
 		if (RM::playing) {
@@ -302,6 +327,17 @@ class $modify(RMPlayLayer, PlayLayer) {
 		return true;
 	}
 
+	void update(float dt) {
+		RM::sampleSpeed(dt);
+		PlayLayer::update(dt);
+		if (RM::recording) RM::guard(this);
+	}
+
+	void togglePracticeMode(bool practice) {
+		PlayLayer::togglePracticeMode(practice);
+		if (practice && RM::recording) RM::abortRecording("practice mode is on");
+	}
+
 	void resetLevel() {
 		PlayLayer::resetLevel();
 		RM::frame = 0;
@@ -316,7 +352,7 @@ class $modify(RMPlayLayer, PlayLayer) {
 		// A real hazard hit that did not kill the player = noclip / god mode
 		if (!wasDead && !isAnticheat && !m_levelEndAnimationStarted && !player->m_isDead) {
 			RM::noclipSeen = true;
-			if (RM::recording) RM::abortRecording("Noclip");
+			if (RM::recording) RM::abortRecording("Noclip detected");
 		}
 	}
 
@@ -346,10 +382,12 @@ class $modify(RMPause, PauseLayer) {
 		auto menu = CCMenu::create();
 		menu->setID("rm-menu"_spr);
 		menu->setPosition({0.f, 0.f});
+		const float S = 0.7f;
+		menu->setScale(S);
 		this->addChild(menu, 50);
 
-		float x = 80.f;
-		float y = win.height / 2 + 75.f;
+		float x = 72.f;
+		float y = (win.height / 2 + 62.f) / S;
 
 		auto addBtn = [&](char const* text, char const* tex, SEL_MenuHandler cb, float yy) {
 			auto spr = ButtonSprite::create(text, 100, true, "bigFont.fnt", tex, 28.f, .6f);
@@ -365,8 +403,7 @@ class $modify(RMPause, PauseLayer) {
 		label->setScale(.35f);
 		label->setAlignment(kCCTextAlignmentCenter);
 		label->setPosition({x, y});
-		this->addChild(label, 50);
-		label->setID("rm-label"_spr);
+		menu->addChild(label); // lives in the menu so it is removed on rebuild
 
 		// replay selector arrows
 		auto left = CCMenuItemSpriteExtra::create(
