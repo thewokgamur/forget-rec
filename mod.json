@@ -6,8 +6,8 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"id": "yourname.replay-macro",
-	"name": "Replay Macro",
+	"id": "ordinaryplayer",
+	"name": "Forget Rec",
 	"version": "v1.0.0",
 	"developer": "yourname",
 	"description": "Record and play back your inputs. Recording turns off automatically if noclip or speedhack is detected.",
