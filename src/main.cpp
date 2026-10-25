@@ -36,6 +36,9 @@ namespace RM {
 	inline bool playing = false;
 	inline bool injecting = false;
 	inline bool noclipSeen = false;
+	inline bool abortActive = false;
+	inline std::string abortReason;
+	inline std::chrono::steady_clock::time_point abortAt;
 	inline bool speedCheat = false;
 	inline bool haveLast = false;
 	inline double accSim = 0.0, accReal = 0.0;
@@ -119,7 +122,7 @@ namespace RM {
 	}
 
 	inline void resetAll() {
-		recording = playing = injecting = noclipSeen = speedCheat = haveLast = false;
+		recording = playing = injecting = noclipSeen = speedCheat = haveLast = abortActive = false;
 		accSim = accReal = 0.0;
 		frame = 0;
 		playIdx = 0;
@@ -181,6 +184,9 @@ namespace RM {
 	inline void abortRecording(std::string const& msg) {
 		recording = false;
 		inputs.clear();
+		abortActive = true;
+		abortReason = msg;
+		abortAt = std::chrono::steady_clock::now();
 		notify("Recording turned off: " + msg, NotificationIcon::Error);
 	}
 
@@ -190,6 +196,9 @@ namespace RM {
 		auto why = detectCheat(true);
 		if (!why.empty()) {
 			inputs.clear();
+			abortActive = true;
+			abortReason = why + " detected";
+			abortAt = std::chrono::steady_clock::now();
 			notify("Replay NOT saved: " + why + " detected", NotificationIcon::Error);
 			return;
 		}
@@ -329,6 +338,41 @@ class $modify(RMBaseLayer, GJBaseGameLayer) {
 };
 
 class $modify(RMPlayLayer, PlayLayer) {
+	struct Fields {
+		CCDrawNode* dot = nullptr;
+		CCLabelBMFont* label = nullptr;
+		std::string key;
+	};
+
+	void updateRM() {
+		if (!m_fields->dot) return;
+		int st = -1;
+		std::string text;
+		auto why = RM::detectCheat(false);
+		bool recent = RM::abortActive &&
+			std::chrono::duration<double>(std::chrono::steady_clock::now() - RM::abortAt).count() < 4.0;
+		if (!why.empty()) { st = 2; text = why; }
+		else if (recent) { st = 2; text = RM::abortReason; }
+		else if (RM::recording) { st = 0; text = "REC"; }
+		else if (RM::playing) { st = 1; text = "PLAY"; }
+
+		std::string key = std::to_string(st) + text;
+		if (key == m_fields->key) return;
+		m_fields->key = key;
+
+		m_fields->dot->clear();
+		if (st < 0) {
+			m_fields->label->setString("");
+			return;
+		}
+		ccColor4F c = st == 0 ? ccc4f(0.2f, 1.f, 0.3f, 1.f)
+			: st == 1 ? ccc4f(0.3f, 0.6f, 1.f, 1.f)
+			: ccc4f(1.f, 0.2f, 0.2f, 1.f);
+		m_fields->dot->drawDot({0.f, 0.f}, 8.f, ccc4f(1.f, 1.f, 1.f, 1.f)); // white rim
+		m_fields->dot->drawDot({0.f, 0.f}, 6.5f, c);
+		m_fields->label->setString(text.c_str());
+	}
+
 	static void onModify(auto& self) {
 		// run outermost so we can see the final result of destroyPlayer
 		(void)self.setHookPriority("PlayLayer::destroyPlayer", Priority::First);
@@ -339,6 +383,20 @@ class $modify(RMPlayLayer, PlayLayer) {
 		RM::levelID = level->m_levelID.value();
 		RM::name = "main";
 		if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
+
+		// cheat / status indicator: circle at left-center of the screen
+		auto win = CCDirector::get()->getWinSize();
+		auto dot = CCDrawNode::create();
+		dot->setPosition({14.f, win.height / 2});
+		m_uiLayer->addChild(dot, 100);
+		auto label = CCLabelBMFont::create("", "bigFont.fnt");
+		label->setScale(0.3f);
+		label->setAnchorPoint({0.f, 0.5f});
+		label->setPosition({26.f, win.height / 2});
+		m_uiLayer->addChild(label, 100);
+		m_fields->dot = dot;
+		m_fields->label = label;
+
 		RM::load();
 		return true;
 	}
@@ -347,6 +405,7 @@ class $modify(RMPlayLayer, PlayLayer) {
 		RM::sampleSpeed(dt);
 		PlayLayer::update(dt);
 		if (RM::recording) RM::guard(this);
+		this->updateRM();
 	}
 
 	void togglePracticeMode(bool practice) {
