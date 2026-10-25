@@ -19,6 +19,9 @@
 #include <sstream>
 
 using namespace geode::prelude;
+
+// Eclipse Menu public API (cheat indicator state). Header-only, talks to Eclipse at runtime.
+#include "eclipse/modules.hpp"
 namespace fs = std::filesystem;
 
 // ---------------------------------------------------------------------------
@@ -44,6 +47,9 @@ namespace RM {
 	inline double accSim = 0.0, accReal = 0.0;
 	inline std::chrono::steady_clock::time_point lastT;
 	inline uint32_t tick = 0;
+	inline double lastRatio = 1.0;   // debug: last measured game/real speed ratio
+	inline uint32_t updates = 0;     // debug: PlayLayer::update calls
+	inline uint32_t steps = 0;       // debug: processCommands calls
 	inline uint32_t frame = 0;
 	inline size_t playIdx = 0;
 	inline int levelID = 0;
@@ -132,6 +138,7 @@ namespace RM {
 	// --- real-time speed measurement (catches speedhacks that scale dt) ---
 
 	inline void sampleSpeed(float dt) {
+		updates++;
 		auto now = std::chrono::steady_clock::now();
 		if (!haveLast) { lastT = now; haveLast = true; return; }
 		double real = std::chrono::duration<double>(now - lastT).count();
@@ -141,14 +148,35 @@ namespace RM {
 		accReal += real;
 		if (accReal >= 0.25) {
 			double ratio = accSim / accReal;
+			lastRatio = ratio;
 			speedCheat = (ratio > 1.15 || ratio < 0.85);
 			accSim = accReal = 0.0;
 		}
 	}
 
+	// Ask Eclipse (its cheat indicator) whether any cheat is active.
+	// Returns the name of the active hack, or "" if none / Eclipse not installed.
+	// Cached for a few calls to stay cheap; force=true refreshes immediately.
+	inline std::string eclipseCheat(bool force) {
+		static uint32_t n = 0;
+		static std::string cache;
+		if (force || (n++ & 7) == 0) {
+			cache.clear();
+			if (Loader::get()->isModLoaded("eclipse.eclipse-menu")) {
+				auto list = eclipse::getEnabledCheats();
+				if (!list.empty()) cache = std::string(list[0].name);
+				else if (eclipse::hasCheatsEnabled()) cache = "Eclipse cheat";
+			}
+		}
+		return cache;
+	}
+
 	// Returns a non-empty reason string if a cheat is active.
 	// scanMods = false skips the (slower) loaded-mod scan.
 	inline std::string detectCheat(bool scanMods) {
+		// 0) Eclipse's own cheat indicator (most reliable when Eclipse is installed)
+		if (auto e = eclipseCheat(scanMods); !e.empty()) return e;
+
 		// 1) speedhack: scheduler time scale changed
 		auto ts = CCDirector::get()->getScheduler()->getTimeScale();
 		if (std::fabs(ts - 1.f) > 0.001f) return "Speedhack";
@@ -194,6 +222,9 @@ namespace RM {
 	inline void finishRecording() {
 		recording = false;
 		auto why = detectCheat(true);
+		if (why.empty() && Loader::get()->isModLoaded("eclipse.eclipse-menu") && eclipse::hasCheatedInAttempt()) {
+			why = "Cheat used this attempt";
+		}
 		if (!why.empty()) {
 			inputs.clear();
 			abortActive = true;
@@ -319,6 +350,8 @@ class $modify(RMBaseLayer, GJBaseGameLayer) {
 			return;
 		}
 
+		RM::steps++;
+
 		// ---- cheat / practice watchdog ----
 		if (RM::recording) RM::guard(PlayLayer::get());
 
@@ -341,11 +374,20 @@ class $modify(RMPlayLayer, PlayLayer) {
 	struct Fields {
 		CCDrawNode* dot = nullptr;
 		CCLabelBMFont* label = nullptr;
+		CCLabelBMFont* dbg = nullptr;
 		std::string key;
 	};
 
 	void updateRM() {
 		if (!m_fields->dot) return;
+
+		// live debug readout (speed ratio, time scale, hook counters)
+		if (m_fields->dbg && RM::updates % 15 == 0) {
+			auto ts = CCDirector::get()->getScheduler()->getTimeScale();
+			m_fields->dbg->setString(fmt::format("x{:.2f} ts{:.2f} u{} s{}",
+				RM::lastRatio, ts, RM::updates, RM::steps).c_str());
+		}
+
 		int st = -1;
 		std::string text;
 		auto why = RM::detectCheat(false);
