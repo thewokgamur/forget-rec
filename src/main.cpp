@@ -51,6 +51,9 @@ namespace RM {
 	inline uint32_t updates = 0;     // debug: PlayLayer::update calls
 	inline uint32_t steps = 0;       // debug: processCommands calls
 	inline uint32_t frame = 0;
+	inline std::vector<RInput> bestInputs;  // longest attempt so far (temporary, in memory)
+	inline uint32_t bestFrames = 0;
+	inline bool attemptBanked = false;      // current attempt already stored / dead -> stop recording inputs
 	inline size_t playIdx = 0;
 	inline int levelID = 0;
 	inline std::string name = "main";
@@ -130,6 +133,9 @@ namespace RM {
 	inline void resetAll() {
 		recording = playing = injecting = noclipSeen = speedCheat = haveLast = abortActive = false;
 		accSim = accReal = 0.0;
+		bestInputs.clear();
+		bestFrames = 0;
+		attemptBanked = false;
 		frame = 0;
 		playIdx = 0;
 		inputs.clear();
@@ -212,15 +218,38 @@ namespace RM {
 	inline void abortRecording(std::string const& msg) {
 		recording = false;
 		inputs.clear();
+		bestInputs.clear();
+		bestFrames = 0;
 		abortActive = true;
 		abortReason = msg;
 		abortAt = std::chrono::steady_clock::now();
 		notify("Recording turned off: " + msg, NotificationIcon::Error);
 	}
 
-	// Stop recording and save, but only if a final full cheat check passes.
-	inline void finishRecording() {
+	// Store the current attempt temporarily if it is the longest so far.
+	inline void bankAttempt() {
+		if (!recording || attemptBanked) return;
+		attemptBanked = true;
+		if (frame > bestFrames && !inputs.empty()) {
+			bestFrames = frame;
+			bestInputs = inputs;
+		}
+	}
+
+	// Stop recording and save the LONGEST attempt, but only if a final cheat check passes.
+	inline void finishRecording(bool completed = false) {
+		if (completed) {            // level beaten: the finished run is the one to keep
+			bestInputs = inputs;
+			bestFrames = frame;
+		} else {
+			bankAttempt();          // count the attempt in progress too
+		}
 		recording = false;
+		uint32_t frames = bestFrames;
+		if (frames > 0) inputs = bestInputs;
+		bestInputs.clear();
+		bestFrames = 0;
+
 		auto why = detectCheat(true);
 		if (why.empty() && Loader::get()->isModLoaded("eclipse.eclipse-menu") && eclipse::hasCheatedInAttempt()) {
 			why = "Cheat used this attempt";
@@ -233,7 +262,11 @@ namespace RM {
 			notify("Replay NOT saved: " + why + " detected", NotificationIcon::Error);
 			return;
 		}
-		if (save()) notify("Replay saved: " + name);
+		if (inputs.empty()) {
+			notify("Nothing to save (no inputs recorded)", NotificationIcon::Error);
+			return;
+		}
+		if (save()) notify(fmt::format("Replay saved: {} (longest attempt: {} frames)", name, frames));
 	}
 
 	// Called every frame while recording: turns recording off on cheats / practice mode.
@@ -336,7 +369,7 @@ class $modify(RMBaseLayer, GJBaseGameLayer) {
 			if (RM::recording && !RM::injecting) {
 				if (RM::speedCheat || RM::noclipSeen) {
 					RM::abortRecording(std::string(RM::speedCheat ? "Speedhack" : "Noclip") + " detected");
-				} else {
+				} else if (!RM::attemptBanked) {
 					RM::inputs.push_back({RM::frame, button, down, isPlayer1});
 				}
 			}
@@ -456,10 +489,12 @@ class $modify(RMPlayLayer, PlayLayer) {
 	}
 
 	void resetLevel() {
+		if (RM::recording) RM::bankAttempt(); // manual restart / respawn without death hook
 		PlayLayer::resetLevel();
 		RM::frame = 0;
 		RM::playIdx = 0;
 		if (RM::recording) RM::inputs.clear();
+		RM::attemptBanked = false;
 	}
 
 	void destroyPlayer(PlayerObject* player, GameObject* obj) {
@@ -470,12 +505,14 @@ class $modify(RMPlayLayer, PlayLayer) {
 		if (!wasDead && !isAnticheat && !m_levelEndAnimationStarted && !player->m_isDead) {
 			RM::noclipSeen = true;
 			if (RM::recording) RM::abortRecording("Noclip detected");
+		} else if (!wasDead && !isAnticheat && player->m_isDead && RM::recording) {
+			RM::bankAttempt(); // died: keep this attempt temporarily if it is the longest
 		}
 	}
 
 	void levelComplete() {
 		PlayLayer::levelComplete();
-		if (RM::recording) RM::finishRecording();
+		if (RM::recording) RM::finishRecording(true);
 		RM::playing = false;
 	}
 };
@@ -558,6 +595,9 @@ class $modify(RMPause, PauseLayer) {
 		RM::playing = false;
 		RM::recording = true;
 		RM::inputs.clear();
+		RM::bestInputs.clear();
+		RM::bestFrames = 0;
+		RM::attemptBanked = true; // the restart below must not bank the old attempt
 		RM::notify("Recording... level restarted");
 		this->onRestart(nullptr); // recording must start at frame 0
 	}
