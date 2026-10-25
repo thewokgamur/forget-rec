@@ -6,10 +6,10 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"id": "ordinaryplayer",
+	"id": "ordinaryplayer.forgetrec",
 	"name": "Forget Rec",
 	"version": "v1.0.0",
-	"developer": "yourname",
+	"developer": "ordinaryplayer",
 	"description": "Record and play back your inputs. Recording turns off automatically if noclip or speedhack is detected.",
 	"settings": {
 		"cheat-keywords": {
