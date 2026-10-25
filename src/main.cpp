@@ -136,9 +136,9 @@ namespace RM {
 		if (real > 0.5 || dt > 0.5f) { accSim = accReal = 0.0; return; } // pause / hitch
 		accSim += dt;
 		accReal += real;
-		if (accReal >= 1.0) {
+		if (accReal >= 0.25) {
 			double ratio = accSim / accReal;
-			speedCheat = (ratio > 1.1 || ratio < 0.9);
+			speedCheat = (ratio > 1.15 || ratio < 0.85);
 			accSim = accReal = 0.0;
 		}
 	}
@@ -182,6 +182,18 @@ namespace RM {
 		recording = false;
 		inputs.clear();
 		notify("Recording turned off: " + msg, NotificationIcon::Error);
+	}
+
+	// Stop recording and save, but only if a final full cheat check passes.
+	inline void finishRecording() {
+		recording = false;
+		auto why = detectCheat(true);
+		if (!why.empty()) {
+			inputs.clear();
+			notify("Replay NOT saved: " + why + " detected", NotificationIcon::Error);
+			return;
+		}
+		if (save()) notify("Replay saved: " + name);
 	}
 
 	// Called every frame while recording: turns recording off on cheats / practice mode.
@@ -282,7 +294,11 @@ class $modify(RMBaseLayer, GJBaseGameLayer) {
 		if (this->isMainPlay()) {
 			if (RM::playing && !RM::injecting) return; // block manual input while replaying
 			if (RM::recording && !RM::injecting) {
-				RM::inputs.push_back({RM::frame, button, down, isPlayer1});
+				if (RM::speedCheat || RM::noclipSeen) {
+					RM::abortRecording(std::string(RM::speedCheat ? "Speedhack" : "Noclip") + " detected");
+				} else {
+					RM::inputs.push_back({RM::frame, button, down, isPlayer1});
+				}
 			}
 		}
 		GJBaseGameLayer::handleButton(down, button, isPlayer1);
@@ -358,10 +374,7 @@ class $modify(RMPlayLayer, PlayLayer) {
 
 	void levelComplete() {
 		PlayLayer::levelComplete();
-		if (RM::recording) {
-			RM::recording = false;
-			if (RM::save()) RM::notify("Replay saved: " + RM::name);
-		}
+		if (RM::recording) RM::finishRecording();
 		RM::playing = false;
 	}
 };
@@ -427,8 +440,7 @@ class $modify(RMPause, PauseLayer) {
 
 	void onRMRecord(CCObject*) {
 		if (RM::recording) {
-			RM::recording = false;
-			if (RM::save()) RM::notify("Replay saved: " + RM::name);
+			RM::finishRecording();
 			this->buildRM();
 			return;
 		}
